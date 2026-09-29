@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Worker</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c2230; --mute:#667085; --line:#e4e7ec; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1218; --card:#171c26; --ink:#e7eaf0; --mute:#98a2b3; --line:#283041; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 24px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { margin:0; font-size:18px; }
+  header small { color:var(--mute); }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card.full { grid-column:1/-1; }
+  h2 { margin:0 0 10px; font-size:15px; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; color:#fff; }
+  .ok { background:var(--ok); } .bad { background:var(--bad); } .warn { background:var(--warn); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  input, button { font:inherit; padding:7px 10px; border-radius:7px; border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  input[type=text], input[type=url] { flex:1; min-width:180px; }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:0; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  ul { list-style:none; margin:0; padding:0; }
+  li { padding:6px 0; border-bottom:1px solid var(--line); word-break:break-all; }
+  li:last-child { border:0; }
+  code { background:var(--bg); padding:1px 5px; border-radius:4px; font-size:12px; }
+  .mute { color:var(--mute); font-size:12px; }
+  .bar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--accent); transition:width .3s; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-word; }
+  th { color:var(--mute); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="name">worker…</h1>
+    <small id="selfUrl"></small>
+  </div>
+  <span id="status" class="pill warn">conectando…</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Coordinadores</h2>
+    <form id="coordForm" class="row" style="margin-top:0">
+      <input id="coordUrl" type="url" placeholder="https://url-del-coordinador.ngrok-free.dev" required />
+      <button type="submit">Agregar</button>
+    </form>
+    <p id="coordMsg" class="mute"></p>
+    <ul id="coordList"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Estado</h2>
+    <div class="mute">Carga <b id="loadTxt">0%</b> · tareas en curso <b id="active">0</b> · hechas <b id="done">0</b></div>
+    <div class="bar" style="margin:8px 0"><i id="loadBar" style="width:0"></i></div>
+    <div class="mute">Pulsos enviados <b id="pulses">0</b> · fallidos <b id="pulsesFailed">0</b></div>
+    <form id="delayForm" class="row">
+      <label class="mute">Lag por tarea (ms)</label>
+      <input id="delay" type="number" min="0" max="120000" step="100" style="width:110px" />
+      <button type="submit">Aplicar</button>
+    </form>
+    <div class="row">
+      <button id="stopPulses" class="ghost" type="button">Parar pulsos</button>
+      <button id="resumePulses" class="ghost" type="button">Reanudar pulsos</button>
+    </div>
+  </section>
+
+  <section class="card full">
+    <h2>Capacidades</h2>
+    <ul id="capList"></ul>
+  </section>
+
+  <section class="card full">
+    <h2>Tareas recibidas</h2>
+    <div class="mute" id="pending"></div>
+    <table>
+      <thead><tr><th>Tarea</th><th>Tipo</th><th>Estado</th><th>Payload</th><th>Resultado / error</th><th>Entrega</th></tr></thead>
+      <tbody id="taskRows"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id)
+  const api = (path, options) => fetch(path, { headers: { "Content-Type": "application/json" }, ...options }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) }))
+  const pretty = v => (v === null || v === undefined ? "" : JSON.stringify(v))
+  let delayFilled = false
+
+  function text(tag, value) { const n = document.createElement(tag); n.textContent = value; return n }
+
+  async function refresh() {
+    try {
+      const [cfg, tasks, caps] = await Promise.all([api("/config"), api("/tasks"), api("/task/capabilities")])
+      const c = cfg.body
+
+      $("name").textContent = c.name
+      $("selfUrl").textContent = c.selfUrl
+      const status = $("status")
+      status.className = "pill " + (!c.pulsing ? "bad" : c.registered ? "ok" : "warn")
+      status.textContent = !c.pulsing ? "pulsos detenidos" : c.registered ? "registrado" : c.hunting ? "buscando líder…" : "sin coordinador"
+
+      $("loadTxt").textContent = Math.round(c.load * 100) + "%"
+      $("loadBar").style.width = Math.round(c.load * 100) + "%"
+      $("active").textContent = c.active
+      $("done").textContent = c.tasksDone
+      $("pulses").textContent = c.pulsesSent
+      $("pulsesFailed").textContent = c.pulsesFailed
+      if (!delayFilled) { $("delay").value = c.taskDelayMs; delayFilled = true }
+
+      const list = $("coordList")
+      list.replaceChildren(...(c.coordinators.length ? c.coordinators : []).map(url => {
+        const li = document.createElement("li")
+        li.append(text("span", url))
+        if (url === c.parentUrl) li.append(" ", Object.assign(text("span", c.registered ? "líder actual" : "último intento"), { className: "pill " + (c.registered ? "ok" : "warn") }))
+        return li
+      }))
+      if (!c.coordinators.length) list.append(text("li", "Ninguno todavía: agrega la URL de un coordinador."))
+
+      const capList = $("capList")
+      capList.replaceChildren(...((caps.body.data && caps.body.data.capabilities) || []).map(cap => {
+        const li = document.createElement("li")
+        li.append(text("b", cap.type), " — ", cap.description, document.createElement("br"),
+          text("code", "payload " + pretty(cap.example)), " ", text("code", "resultado " + pretty(cap.result)))
+        return li
+      }))
+
+      $("pending").textContent = tasks.body.pendingDelivery ? `${tasks.body.pendingDelivery} resultado(s) esperando lider para entregarse` : ""
+      $("taskRows").replaceChildren(...(tasks.body.tasks || []).map(t => {
+        const tr = document.createElement("tr")
+        ;[t.taskId, t.type, t.status, pretty(t.payload), t.status === "error" ? t.error : pretty(t.result),
+          t.delivered ? "✔ " + (t.deliveryNote || "") : (t.deliveryNote || (t.status === "running" ? "…" : "pendiente"))]
+          .forEach(v => tr.append(text("td", v)))
+        return tr
+      }))
+    } catch { $("status").className = "pill bad"; $("status").textContent = "sin conexión" }
+  }
+
+  $("coordForm").addEventListener("submit", async e => {
+    e.preventDefault()
+    $("coordMsg").textContent = "Conectando…"
+    const r = await api("/coordinators", { method: "POST", body: JSON.stringify({ url: $("coordUrl").value }) })
+    $("coordMsg").textContent = r.body.ok ? (r.body.note || "Registrado con el líder.") : (r.body.error || "No se pudo registrar (se seguirá intentando).")
+    $("coordUrl").value = ""
+    refresh()
+  })
+
+  $("delayForm").addEventListener("submit", async e => {
+    e.preventDefault()
+    await api("/config/delay", { method: "POST", body: JSON.stringify({ ms: Number($("delay").value) }) })
+    refresh()
+  })
+
+  $("stopPulses").addEventListener("click", async () => { await api("/shutdown", { method: "POST", body: "{}" }); refresh() })
+  $("resumePulses").addEventListener("click", async () => { await api("/resume", { method: "POST", body: "{}" }); refresh() })
+
+  refresh()
+  setInterval(refresh, 1500)
+</script>
+</body>
+</html>
