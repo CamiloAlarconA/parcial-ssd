@@ -74,27 +74,57 @@ const unwrap = body => (body && typeof body === "object" && body.data && typeof 
 // Acepta lo que mande cada equipo: ["a","b"], {capabilities:[...]},
 // {type,data:{capabilities:[...]}}, y cada item como string u objeto.
 function normalizeCapabilities(body) {
-    let list = body
-    if (list && !Array.isArray(list)) list = unwrap(list)
-    if (list && !Array.isArray(list)) list = list.capabilities || list.caps || []
+    // Contrato estandarizado:
+    // {
+    //   worker,
+    //   capabilities: ["cap1", "cap2"],
+    //   schemas: {
+    //     cap1: { description, payload, expectedResult }
+    //   }
+    // }
+    let source = body
+    if (source && !Array.isArray(source)) source = unwrap(source)
+    if (!source || typeof source !== "object") return []
+
+    const list = Array.isArray(source) ? source : (source.capabilities || source.caps || [])
     if (!Array.isArray(list)) return []
+
+    const schemas = !Array.isArray(source) && source.schemas && typeof source.schemas === "object"
+        ? source.schemas
+        : {}
 
     const out = []
 
     for (const item of list) {
-        const type = typeof item === "string" ? item : (item && (item.type || item.name || item.capability || item.id))
+        const type = typeof item === "string"
+            ? item
+            : (item && (item.type || item.name || item.capability || item.id))
+
         if (!type || out.some(c => c.type === type)) continue
 
+        const schema = schemas[type] || {}
         const known = KNOWN[type] || {}
-        const schema = (item && typeof item === "object" && (item.payload || item.schema || item.input || item.params)) || known.payload || null
-        const example = (item && typeof item === "object" && item.example) || known.example || null
+
+        // Contrato nuevo: schema.payload es el ejemplo que se usara para
+        // construir la tarea; schema.expectedResult es el ejemplo de salida.
+        const payloadExample = schema.payload !== undefined
+            ? schema.payload
+            : (item && typeof item === "object" && item.example !== undefined ? item.example : known.example || null)
+
+        const resultExample = schema.expectedResult !== undefined
+            ? schema.expectedResult
+            : (item && typeof item === "object" && item.result !== undefined ? item.result : known.result || null)
 
         out.push({
             type: String(type),
-            description: (item && typeof item === "object" && item.description) || known.description || "",
-            payload: schema,
-            example,
-            result: (item && typeof item === "object" && item.result) || known.result || null
+            description: schema.description || (item && typeof item === "object" && item.description) || known.description || "",
+            // Se conserva payload como compatibilidad interna: representa el
+            // ejemplo del contrato estandarizado.
+            payload: payloadExample,
+            example: payloadExample,
+            expectedResult: resultExample,
+            result: resultExample,
+            inputSchema: known.payload || null
         })
     }
 

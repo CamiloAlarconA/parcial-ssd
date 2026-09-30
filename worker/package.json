@@ -5,7 +5,7 @@
   "description": "Worker del parcial de Sistemas Distribuidos (search_text, stats_compute, text_transform)",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js 4000"
+    "start": "node index.js 3000"
   },
   "dependencies": {
     "axios": "^1.20.0",

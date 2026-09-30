@@ -316,6 +316,83 @@ el("probe-btn").addEventListener("click", async () => {
   }
 })
 
+// ------------------------------------------------------------- identidad
+
+let identityConfigured = false
+
+async function loadIdentity() {
+  try {
+    const info = await api("/node/identity")
+    identityConfigured = Boolean(info.id)
+
+    const button = el("me")
+    if (button) {
+      button.textContent = info.id ? `ID: ${info.id}` : "Configurar ID"
+      button.className = info.id ? "pill pill-live" : "pill pill-idle"
+    }
+
+    const modal = el("identity-modal")
+    if (modal && !info.id) {
+      modal.hidden = false
+      modal.style.display = "flex"
+      setTimeout(() => el("identity-id")?.focus(), 50)
+    }
+  } catch (e) {
+    console.error("No se pudo consultar la identidad:", e)
+  }
+}
+
+async function saveIdentity(event) {
+  event.preventDefault()
+  const input = el("identity-id")
+  const msg = el("identity-msg")
+  const id = input.value.trim()
+  msg.textContent = "Guardando…"
+
+  try {
+    const result = await api("/node/identity", {
+      method: "POST",
+      body: JSON.stringify({ id })
+    })
+
+    if (!result.ok) {
+      msg.textContent = result.error || "No se pudo guardar el ID"
+      return
+    }
+
+    identityConfigured = true
+    const modal = el("identity-modal")
+    modal.hidden = true
+    modal.style.display = "none"
+
+    const button = el("me")
+    if (button) {
+      button.textContent = `ID: ${result.id}`
+      button.className = "pill pill-live"
+    }
+
+    refresh()
+  } catch (e) {
+    msg.textContent = e.message || "No se pudo guardar el ID"
+  }
+}
+
+el("me")?.addEventListener("click", async () => {
+  const info = await api("/node/identity")
+  const input = el("identity-id")
+  const modal = el("identity-modal")
+  const msg = el("identity-msg")
+  if (!modal || !input) return
+
+  input.value = info.id || ""
+  msg.textContent = ""
+  modal.hidden = false
+  modal.style.display = "flex"
+  setTimeout(() => input.focus(), 50)
+})
+
+el("identity-form")?.addEventListener("submit", saveIdentity)
+
 // ------------------------------------------------------------ tiempo real
 
 function connectStream() {
@@ -367,6 +444,7 @@ async function refresh() {
 }
 
 async function init() {
+  await loadIdentity()
   await refresh()
   try {
     logBuffer = await api("/logs?limit=200")

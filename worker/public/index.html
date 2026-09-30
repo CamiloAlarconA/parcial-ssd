@@ -38,13 +38,23 @@
 <body>
 <header>
   <div>
-    <h1 id="name">worker…</h1>
+    <h1 id="name">worker sin ID</h1>
     <small id="selfUrl"></small>
   </div>
   <span id="status" class="pill warn">conectando…</span>
 </header>
 
 <main>
+  <section class="card full" id="identityCard">
+    <h2>Identidad del Worker</h2>
+    <p class="mute">El ID se define desde esta interfaz y no se genera desde el código.</p>
+    <form id="identityForm" class="row" style="margin-top:0">
+      <input id="workerId" type="text" maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}" placeholder="worker-juan-55223042" required />
+      <button type="submit">Guardar ID</button>
+    </form>
+    <p id="identityMsg" class="mute"></p>
+  </section>
+
   <section class="card">
     <h2>Coordinadores</h2>
     <form id="coordForm" class="row" style="margin-top:0">
@@ -90,6 +100,37 @@
   const $ = id => document.getElementById(id)
   const api = (path, options) => fetch(path, { headers: { "Content-Type": "application/json" }, ...options }).then(async r => ({ ok: r.ok, body: await r.json().catch(() => ({})) }))
   const pretty = v => (v === null || v === undefined ? "" : JSON.stringify(v))
+  async function loadIdentity() {
+    const r = await api("/identity")
+    if (!r.ok) return
+
+    $("workerId").value = r.body.id || ""
+    $("identityMsg").textContent = r.body.id
+      ? `ID actual: ${r.body.id}`
+      : "Configura el ID para poder registrarte en un coordinador."
+    $("workerId").disabled = Boolean(r.body.id && !r.body.canChange)
+  }
+
+  $("identityForm").addEventListener("submit", async e => {
+    e.preventDefault()
+    const id = $("workerId").value.trim()
+    $("identityMsg").textContent = "Guardando…"
+
+    const r = await api("/identity", {
+      method: "POST",
+      body: JSON.stringify({ id })
+    })
+
+    $("identityMsg").textContent = r.body.ok
+      ? `ID configurado: ${r.body.id}${r.body.registered ? " · registrado" : ""}`
+      : (r.body.error || "No se pudo configurar el ID")
+
+    if (r.body.ok) {
+      $("workerId").disabled = true
+      refresh()
+    }
+  })
+
   let delayFilled = false
 
   function text(tag, value) { const n = document.createElement(tag); n.textContent = value; return n }
@@ -159,6 +200,7 @@
   $("stopPulses").addEventListener("click", async () => { await api("/shutdown", { method: "POST", body: "{}" }); refresh() })
   $("resumePulses").addEventListener("click", async () => { await api("/resume", { method: "POST", body: "{}" }); refresh() })
 
+  loadIdentity()
   refresh()
   setInterval(refresh, 1500)
 </script>
